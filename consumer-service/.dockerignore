@@ -1,0 +1,17 @@
+target/
+.mvn/wrapper/*.jar
+.idea/
+.vscode/
+.settings/
+.classpath
+.project
+.factorypath
+*.iml
+*.log
+logs/
+.env
+.env.*
+application.properties
+application.yml
+application-*.properties
+application-*.yml

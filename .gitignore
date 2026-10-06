@@ -1,0 +1,59 @@
+# ---------- Secretos y configuracion local ----------
+.env
+.env.*
+!.env.example
+application.properties
+application.yml
+application.yaml
+application-*.properties
+application-*.yml
+application-*.yaml
+!*.example
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+*.truststore
+secrets/
+credentials*
+*.secret
+
+# ---------- Pruebas locales (no versionar) ----------
+POSTMAN_TEST_LOCAL.txt
+
+# ---------- Build ----------
+target/
+!.mvn/wrapper/maven-wrapper.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# ---------- Logs ----------
+*.log
+logs/
+hs_err_pid*
+replay_pid*
+
+# ---------- IDE ----------
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.settings/
+.classpath
+.project
+.factorypath
+.springBeans
+.sts4-cache/
+.apt_generated/
+bin/
+out/
+nbproject/
+nbbuild/
+dist/
+nbdist/
+.nb-gradle/
+
+# ---------- Sistema operativo ----------
+.DS_Store
+Thumbs.db

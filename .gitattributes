@@ -1,0 +1,6 @@
+# Scripts de shell siempre con LF (evita "/bin/sh^M: bad interpreter").
+# Limitado a los servicios nuevos: los proyectos de referencia no se alteran.
+/auth-service/mvnw text eol=lf
+/producer-service/mvnw text eol=lf
+/consumer-service/mvnw text eol=lf
+/scripts/*.sh text eol=lf

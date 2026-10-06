@@ -1,0 +1,264 @@
+# Despliegue completo: 3 Zookeeper + 3 brokers Kafka + Kafka UI + auth/producer/consumer.
+# Los valores sensibles se leen desde el archivo .env (no versionado). Ver .env.example.
+#
+#   docker compose up -d --build        # construye imagenes e inicia todo
+#   docker compose ps                   # estado y healthchecks
+#   docker compose down                 # detiene (agregar -v para borrar volumenes)
+
+name: sumativa3
+
+networks:
+  kafka-net:
+    driver: bridge
+
+volumes:
+  zk1-data:
+  zk1-log:
+  zk2-data:
+  zk2-log:
+  zk3-data:
+  zk3-log:
+  kafka1-data:
+  kafka2-data:
+  kafka3-data:
+
+# ---------- Bloques reutilizables ----------
+x-zookeeper-env: &zookeeper-env
+  ZOOKEEPER_CLIENT_PORT: 2181
+  ZOOKEEPER_TICK_TIME: 2000
+  ZOOKEEPER_INIT_LIMIT: 5
+  ZOOKEEPER_SYNC_LIMIT: 2
+  ZOOKEEPER_SERVERS: zookeeper-1:2888:3888;zookeeper-2:2888:3888;zookeeper-3:2888:3888
+  KAFKA_OPTS: "-Dzookeeper.4lw.commands.whitelist=ruok,srvr"
+
+x-zookeeper-healthcheck: &zookeeper-healthcheck
+  test: ["CMD-SHELL", "echo ruok | nc -w 2 localhost 2181 | grep imok"]
+  interval: 10s
+  timeout: 5s
+  retries: 12
+
+x-kafka-env: &kafka-env
+  KAFKA_ZOOKEEPER_CONNECT: zookeeper-1:2181,zookeeper-2:2181,zookeeper-3:2181
+  # INTERNAL: trafico entre brokers y contenedores de la red Docker (DNS kafka-N:9092)
+  # EXTERNAL: clientes fuera de Docker (Postman/IDE/otra maquina) via KAFKA_EXTERNAL_HOST
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+  KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+  KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+  KAFKA_MIN_INSYNC_REPLICAS: 2
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+  KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+
+x-kafka-healthcheck: &kafka-healthcheck
+  test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+  interval: 10s
+  timeout: 10s
+  retries: 18
+  start_period: 20s
+
+x-zookeeper-deps: &zookeeper-deps
+  zookeeper-1: { condition: service_healthy }
+  zookeeper-2: { condition: service_healthy }
+  zookeeper-3: { condition: service_healthy }
+
+x-jwt-validation-env: &jwt-validation-env
+  JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET en .env}
+  JWT_ISSUER: ${JWT_ISSUER:-sumativa3-auth-service}
+  JWT_AUDIENCE: ${JWT_AUDIENCE:-notificaciones-api}
+
+x-kafka-client-env: &kafka-client-env
+  KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka-1:9092,kafka-2:9092,kafka-3:9092}
+  KAFKA_TOPIC: ${KAFKA_TOPIC:-Notificaciones}
+  KAFKA_SECURITY_PROTOCOL: ${KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
+  KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-PLAIN}
+  KAFKA_SASL_JAAS_CONFIG: ${KAFKA_SASL_JAAS_CONFIG:-}
+
+services:
+  # ======================= Zookeeper =======================
+  zookeeper-1:
+    image: confluentinc/cp-zookeeper:7.4.4
+    hostname: zookeeper-1
+    container_name: zookeeper-1
+    networks: [kafka-net]
+    environment:
+      <<: *zookeeper-env
+      ZOOKEEPER_SERVER_ID: 1
+    volumes:
+      - zk1-data:/var/lib/zookeeper/data
+      - zk1-log:/var/lib/zookeeper/log
+    healthcheck: *zookeeper-healthcheck
+    restart: unless-stopped
+
+  zookeeper-2:
+    image: confluentinc/cp-zookeeper:7.4.4
+    hostname: zookeeper-2
+    container_name: zookeeper-2
+    networks: [kafka-net]
+    environment:
+      <<: *zookeeper-env
+      ZOOKEEPER_SERVER_ID: 2
+    volumes:
+      - zk2-data:/var/lib/zookeeper/data
+      - zk2-log:/var/lib/zookeeper/log
+    healthcheck: *zookeeper-healthcheck
+    restart: unless-stopped
+
+  zookeeper-3:
+    image: confluentinc/cp-zookeeper:7.4.4
+    hostname: zookeeper-3
+    container_name: zookeeper-3
+    networks: [kafka-net]
+    environment:
+      <<: *zookeeper-env
+      ZOOKEEPER_SERVER_ID: 3
+    volumes:
+      - zk3-data:/var/lib/zookeeper/data
+      - zk3-log:/var/lib/zookeeper/log
+    healthcheck: *zookeeper-healthcheck
+    restart: unless-stopped
+
+  # ======================= Kafka =======================
+  kafka-1:
+    image: confluentinc/cp-kafka:7.4.4
+    hostname: kafka-1
+    container_name: kafka-1
+    networks: [kafka-net]
+    depends_on: *zookeeper-deps
+    ports:
+      - "29092:29092"
+    volumes:
+      - kafka1-data:/var/lib/kafka/data
+    environment:
+      <<: *kafka-env
+      KAFKA_BROKER_ID: 1
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-1:9092,EXTERNAL://${KAFKA_EXTERNAL_HOST:-localhost}:29092
+    healthcheck: *kafka-healthcheck
+    restart: unless-stopped
+
+  kafka-2:
+    image: confluentinc/cp-kafka:7.4.4
+    hostname: kafka-2
+    container_name: kafka-2
+    networks: [kafka-net]
+    depends_on: *zookeeper-deps
+    ports:
+      - "39092:39092"
+    volumes:
+      - kafka2-data:/var/lib/kafka/data
+    environment:
+      <<: *kafka-env
+      KAFKA_BROKER_ID: 2
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:39092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-2:9092,EXTERNAL://${KAFKA_EXTERNAL_HOST:-localhost}:39092
+    healthcheck: *kafka-healthcheck
+    restart: unless-stopped
+
+  kafka-3:
+    image: confluentinc/cp-kafka:7.4.4
+    hostname: kafka-3
+    container_name: kafka-3
+    networks: [kafka-net]
+    depends_on: *zookeeper-deps
+    ports:
+      - "49092:49092"
+    volumes:
+      - kafka3-data:/var/lib/kafka/data
+    environment:
+      <<: *kafka-env
+      KAFKA_BROKER_ID: 3
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:49092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-3:9092,EXTERNAL://${KAFKA_EXTERNAL_HOST:-localhost}:49092
+    healthcheck: *kafka-healthcheck
+    restart: unless-stopped
+
+  # Crea (idempotente) el topico Notificaciones: 3 particiones, RF 3, min.insync.replicas 2
+  kafka-init:
+    image: confluentinc/cp-kafka:7.4.4
+    container_name: kafka-init
+    networks: [kafka-net]
+    depends_on:
+      kafka-1: { condition: service_healthy }
+      kafka-2: { condition: service_healthy }
+      kafka-3: { condition: service_healthy }
+    environment:
+      TOPIC: ${KAFKA_TOPIC:-Notificaciones}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        BS=kafka-1:9092,kafka-2:9092,kafka-3:9092
+        kafka-topics --bootstrap-server "$$BS" --create --if-not-exists \
+          --topic "$$TOPIC" --partitions 3 --replication-factor 3 \
+          --config min.insync.replicas=2 --config retention.ms=43200000
+        kafka-topics --bootstrap-server "$$BS" --describe --topic "$$TOPIC"
+    restart: "no"
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: kafka-ui
+    networks: [kafka-net]
+    depends_on:
+      kafka-init: { condition: service_completed_successfully }
+    ports:
+      # Sin autenticacion: se publica solo en la interfaz local por defecto
+      - "${KAFKA_UI_BIND:-127.0.0.1}:8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: sumativa3
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      DYNAMIC_CONFIG_ENABLED: "false"
+    restart: unless-stopped
+
+  # ======================= Microservicios =======================
+  auth-service:
+    build: ./auth-service
+    image: auth-service:latest
+    container_name: auth-service
+    networks: [kafka-net]
+    ports:
+      - "${AUTH_PORT:-8080}:8080"
+    environment:
+      SERVER_PORT: 8080
+      AUTH_USERNAME: ${AUTH_USERNAME:?Defina AUTH_USERNAME en .env}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:?Defina AUTH_PASSWORD en .env}
+      AUTH_ROLES: ${AUTH_ROLES:-USER,ADMIN}
+      JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET en .env}
+      JWT_ISSUER: ${JWT_ISSUER:-sumativa3-auth-service}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-notificaciones-api}
+      JWT_EXPIRATION_SECONDS: ${JWT_EXPIRATION_SECONDS:-3600}
+    restart: unless-stopped
+
+  producer-service:
+    build: ./producer-service
+    image: producer-service:latest
+    container_name: producer-service
+    networks: [kafka-net]
+    depends_on:
+      kafka-init: { condition: service_completed_successfully }
+    ports:
+      - "${PRODUCER_PORT:-8081}:8081"
+    environment:
+      <<: [*jwt-validation-env, *kafka-client-env]
+      SERVER_PORT: 8081
+      KAFKA_TOPIC_PARTITIONS: 3
+      KAFKA_TOPIC_REPLICAS: 3
+    restart: unless-stopped
+
+  consumer-service:
+    build: ./consumer-service
+    image: consumer-service:latest
+    container_name: consumer-service
+    networks: [kafka-net]
+    depends_on:
+      kafka-init: { condition: service_completed_successfully }
+    ports:
+      - "${CONSUMER_PORT:-8082}:8082"
+    environment:
+      <<: [*jwt-validation-env, *kafka-client-env]
+      SERVER_PORT: 8082
+      KAFKA_CONSUMER_GROUP_ID: ${KAFKA_CONSUMER_GROUP_ID:-notificaciones-consumer}
+      KAFKA_AUTO_OFFSET_RESET: ${KAFKA_AUTO_OFFSET_RESET:-earliest}
+      KAFKA_LISTENER_CONCURRENCY: ${KAFKA_LISTENER_CONCURRENCY:-3}
+    restart: unless-stopped

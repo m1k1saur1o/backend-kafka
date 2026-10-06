@@ -1,0 +1,12 @@
+# Copia este archivo como application.properties en la carpeta del servicio (ignorado por git);
+# Spring Boot lo carga automaticamente desde el directorio de trabajo al ejecutar
+# consumer-service fuera de Docker. Nunca subas valores reales al repositorio.
+# Alternativa recomendada: exportar las variables de entorno equivalentes.
+
+server.port=8082
+app.jwt.secret=<mismo-secreto-que-auth-service>
+app.jwt.issuer=sumativa3-auth-service
+app.jwt.audience=notificaciones-api
+app.kafka.bootstrap-servers=<host1>:29092,<host2>:39092,<host3>:49092
+app.kafka.topic=Notificaciones
+app.kafka.group-id=notificaciones-consumer

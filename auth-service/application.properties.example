@@ -1,0 +1,13 @@
+# Copia este archivo como application.properties en la carpeta del servicio (ignorado por git);
+# Spring Boot lo carga automaticamente desde el directorio de trabajo al ejecutar
+# auth-service fuera de Docker. Nunca subas valores reales al repositorio.
+# Alternativa recomendada: exportar las variables de entorno equivalentes.
+
+app.auth.username=<usuario>
+app.auth.password=<contrasena>
+app.auth.roles=USER,ADMIN
+app.jwt.secret=<secreto-de-al-menos-32-caracteres>
+app.jwt.issuer=sumativa3-auth-service
+app.jwt.audience=notificaciones-api
+app.jwt.expiration=3600s
+server.port=8080
