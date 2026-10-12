@@ -91,6 +91,18 @@ class AdminEndpointsSecurityTest {
 	}
 
 	@Test
+	void auditoriaRequiereTokenYResponde() throws Exception {
+
+		mockMvc.perform(get("/auditoria/eventos")).andExpect(status().isUnauthorized());
+		mockMvc.perform(get("/auditoria/eventos").header("Authorization", bearer(TestJwt.valido())))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(get("/auditoria/eventos").header("Authorization", bearer(TestJwt.valido("USER"))))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalProcesados").isNumber())
+				.andExpect(jsonPath("$.eventos").isArray());
+	}
+
+	@Test
 	void healthEsPublico() throws Exception {
 
 		mockMvc.perform(get("/actuator/health")).andExpect(status().isOk());

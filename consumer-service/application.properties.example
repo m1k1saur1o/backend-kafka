@@ -10,3 +10,7 @@ app.jwt.audience=notificaciones-api
 app.kafka.bootstrap-servers=<host1>:29092,<host2>:39092,<host3>:49092
 app.kafka.topic=Notificaciones
 app.kafka.group-id=notificaciones-consumer
+app.kafka.auditoria.topic=bff-call-events
+app.kafka.auditoria.group-id=bff-auditoria-consumer
+# Sin discovery-service local:
+eureka.client.enabled=false

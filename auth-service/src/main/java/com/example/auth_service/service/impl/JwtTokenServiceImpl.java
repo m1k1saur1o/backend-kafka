@@ -21,6 +21,7 @@ import com.example.auth_service.service.TokenService;
 
 /**
  * Emite JWT firmados con HS256. Claims: sub, roles, iat, nbf, exp, iss, aud y jti.
+ * {@code aud} contiene JWT_AUDIENCE más las audiencias de JWT_EXTRA_AUDIENCES.
  */
 @Service
 public class JwtTokenServiceImpl implements TokenService {
@@ -57,7 +58,7 @@ public class JwtTokenServiceImpl implements TokenService {
 		JwtClaimsSet claims = JwtClaimsSet.builder()
 				.id(UUID.randomUUID().toString())
 				.issuer(props.issuer())
-				.audience(List.of(props.audience()))
+				.audience(props.audiences())
 				.subject(authentication.getName())
 				.issuedAt(ahora)
 				.notBefore(ahora)

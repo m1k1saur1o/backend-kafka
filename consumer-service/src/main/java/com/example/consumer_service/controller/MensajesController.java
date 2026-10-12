@@ -9,10 +9,15 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.example.consumer_service.service.HistorialMensajesService;
 
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
+
 /**
  * Consulta de los últimos mensajes procesados por esta instancia (historial en memoria).
+ *
+ * Protegido con el Rate Limiter de Resilience4j "consumerApi" (429 al superar el límite).
  */
 @RestController
+@RateLimiter(name = "consumerApi")
 public class MensajesController {
 
 	private final HistorialMensajesService historial;

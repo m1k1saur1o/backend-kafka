@@ -22,4 +22,12 @@ class ConsumerServiceApplicationTests {
 		assertThat(registry.getListenerContainer("notificacionListener").getGroupId())
 				.isEqualTo("notificaciones-consumer");
 	}
+
+	@Test
+	void registraElListenerDeAuditoriaConGrupoPropio() {
+
+		assertThat(registry.getListenerContainer("auditoriaBffListener")).isNotNull();
+		assertThat(registry.getListenerContainer("auditoriaBffListener").getGroupId())
+				.isEqualTo("bff-auditoria-consumer");
+	}
 }

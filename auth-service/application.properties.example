@@ -6,8 +6,14 @@
 app.auth.username=<usuario>
 app.auth.password=<contrasena>
 app.auth.roles=USER,ADMIN
+# Cliente de servicio de ms-bff (grant client_credentials en POST /auth/token)
+app.auth.client.id=ms-bff
+app.auth.client.secret=<secreto-del-cliente>
 app.jwt.secret=<secreto-de-al-menos-32-caracteres>
 app.jwt.issuer=sumativa3-auth-service
 app.jwt.audience=notificaciones-api
+app.jwt.extra-audiences=bff-api
 app.jwt.expiration=3600s
 server.port=8080
+# Sin discovery-service local:
+eureka.client.enabled=false

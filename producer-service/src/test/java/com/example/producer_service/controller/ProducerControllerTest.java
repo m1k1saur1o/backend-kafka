@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -18,6 +19,7 @@ import java.util.concurrent.CompletableFuture;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.TopicPartition;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +39,8 @@ import com.example.producer_service.support.TestJwt;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+
 @SpringBootTest
 @AutoConfigureMockMvc
 @TestPropertySource(locations = "classpath:producer-service-test.properties")
@@ -49,6 +53,16 @@ class ProducerControllerTest {
 
 	@MockBean
 	private KafkaTemplate<String, NotificacionDTO> kafkaTemplate;
+
+	@Autowired
+	private CircuitBreakerRegistry circuitBreakerRegistry;
+
+	@BeforeEach
+	void cerrarCircuito() {
+
+		// El contexto se comparte entre pruebas: cada una parte con el circuito cerrado y sin historial
+		circuitBreakerRegistry.circuitBreaker("kafkaProducer").reset();
+	}
 
 	private MockHttpServletRequestBuilder publicar(String token, String body) {
 
@@ -167,14 +181,58 @@ class ProducerControllerTest {
 	}
 
 	@Test
-	void kafkaNoDisponibleDevuelve503() throws Exception {
+	void kafkaNoDisponibleReintentaYDevuelve503() throws Exception {
 
-		when(kafkaTemplate.send(anyString(), anyString(), any(NotificacionDTO.class)))
-				.thenReturn(CompletableFuture.failedFuture(new KafkaException("broker caído")));
+		kafkaFalla();
 
 		mockMvc.perform(publicar(TestJwt.valido("USER"), BODY))
 				.andExpect(status().isServiceUnavailable())
 				.andExpect(jsonPath("$.error").value("kafka_unavailable"));
+
+		// @Retry: max-attempts=2 en pruebas
+		verify(kafkaTemplate, times(2)).send(anyString(), anyString(), any(NotificacionDTO.class));
+	}
+
+	@Test
+	void fallaTransitoriaSeRecuperaConRetryConElMismoMensaje() throws Exception {
+
+		RecordMetadata md = new RecordMetadata(new TopicPartition("Notificaciones", 0), 7, 0, 0L, 0, 0);
+		when(kafkaTemplate.send(anyString(), anyString(), any(NotificacionDTO.class)))
+				.thenReturn(CompletableFuture.failedFuture(new KafkaException("broker caído")))
+				.thenAnswer(inv -> CompletableFuture.completedFuture(new SendResult<>(
+						new ProducerRecord<>("Notificaciones", inv.getArgument(1), inv.getArgument(2)), md)));
+
+		mockMvc.perform(publicar(TestJwt.valido("USER"), BODY))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.offset").value(7));
+
+		ArgumentCaptor<NotificacionDTO> captor = ArgumentCaptor.forClass(NotificacionDTO.class);
+		verify(kafkaTemplate, times(2)).send(eq("Notificaciones"), anyString(), captor.capture());
+		assertThat(captor.getAllValues().get(1)).isEqualTo(captor.getAllValues().get(0));
+	}
+
+	@Test
+	void circuitBreakerSeAbreTrasFallosRepetidosYNoContactaKafka() throws Exception {
+
+		kafkaFalla();
+
+		// 2 solicitudes x 2 intentos = 4 fallos: alcanza minimum-number-of-calls y abre el circuito
+		for (int i = 0; i < 2; i++) {
+			mockMvc.perform(publicar(TestJwt.valido("USER"), BODY))
+					.andExpect(jsonPath("$.error").value("kafka_unavailable"));
+		}
+
+		mockMvc.perform(publicar(TestJwt.valido("USER"), BODY))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.error").value("circuit_open"));
+
+		verify(kafkaTemplate, times(4)).send(anyString(), anyString(), any(NotificacionDTO.class));
+	}
+
+	private void kafkaFalla() {
+
+		when(kafkaTemplate.send(anyString(), anyString(), any(NotificacionDTO.class)))
+				.thenReturn(CompletableFuture.failedFuture(new KafkaException("broker caído")));
 	}
 
 	@Test

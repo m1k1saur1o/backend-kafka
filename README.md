@@ -8,6 +8,7 @@ La misma imagen de cada microservicio sirve para Docker Compose y para un despli
 
 ## Contenido
 
+0. [Integración con ms-bff: Eureka, JWT y auditoría en Kafka](#integración-con-ms-bff-eureka-jwt-y-auditoría-en-kafka)
 1. [Arquitectura](#arquitectura)
 2. [Microservicios](#microservicios)
 3. [Flujo completo](#flujo-completo)
@@ -21,7 +22,54 @@ La misma imagen de cada microservicio sirve para Docker Compose y para un despli
 11. [Configuración de Kafka](#configuración-de-kafka)
 12. [Despliegue en EC2](#despliegue-en-ec2)
 13. [Operación: logs, estado y tópico](#operación-logs-estado-y-tópico)
-14. [Decisiones técnicas y limitaciones](#decisiones-técnicas-y-limitaciones)
+14. [Resiliencia con Resilience4j](#resiliencia-con-resilience4j)
+15. [Decisiones técnicas y limitaciones](#decisiones-técnicas-y-limitaciones)
+
+---
+
+## Integración con ms-bff: Eureka, JWT y auditoría en Kafka
+
+Esta plataforma se integra con el proyecto hermano `../sumativa2` (`ms-bff` + `ms-backend`):
+
+```
+                      ┌──────────────── red Docker compartida "sumativa-net" ────────────────┐
+ Postman ─JWT─▶ ms-bff :18080 ──http://ms-backend──▶ ms-backend ×N ──JDBC──▶ MySQL            │
+     │            │  (Eureka + LoadBalancer, retry, circuit breaker)                           │
+     │            └─async─ POST http://producer-service/auditoria/eventos (token de servicio)  │
+     │                              │                                                          │
+     └─POST /auth/login─▶ auth-service      producer-service ─acks=all─▶ Kafka "bff-call-events"
+                         (+ /auth/token)                                        │              │
+                                            consumer-service ◀──────────────────┘              │
+                                            GET /auditoria/eventos                             │
+                      discovery-service (Eureka) registra: ms-bff, ms-backend, auth, producer, consumer
+```
+
+| Pieza | Qué se agregó |
+|---|---|
+| `discovery-service` (nuevo) | Eureka Server (Spring Cloud 2023.0.5) con HTTP Basic, publicado solo en `127.0.0.1:8761`. |
+| `auth-service` | Audiencia adicional en el JWT (`JWT_EXTRA_AUDIENCES` → `bff-api`) y grant **client_credentials** en `POST /auth/token` para el token de servicio de ms-bff (rol `AUDIT_PUBLISHER`). |
+| `producer-service` | `POST /auditoria/eventos` (rol `AUDIT_PUBLISHER`) que publica `BffCallEventDTO` v1 en el tópico **`bff-call-events`**, separado de `Notificaciones`, con su propio circuit breaker. |
+| `consumer-service` | Listener `auditoriaBffListener` (group `bff-auditoria-consumer`, ack manual, deduplicación por `eventId`) y `GET /auditoria/eventos` protegido con JWT. |
+| `ms-bff` (sumativa2) | OAuth2 Resource Server (HS256, issuer, audience `bff-api`, expiración), filtro de auditoría asíncrono, resolución de `ms-backend` por Eureka con LoadBalancer, reintento y circuit breaker. |
+
+Documentación específica:
+
+- [`INSTRUCCIONES_POSTMAN.txt`](INSTRUCCIONES_POSTMAN.txt): cómo levantar todo y probarlo paso a paso.
+- [`docs/EVENTO_AUDITORIA_BFF.md`](docs/EVENTO_AUDITORIA_BFF.md) y [`docs/bff-call-event.v1.schema.json`](docs/bff-call-event.v1.schema.json): DTO, esquema JSON, versionado y qué ocurre si Kafka no está disponible.
+- [`docs/DESPLIEGUE_AWS_EC2.md`](docs/DESPLIEGUE_AWS_EC2.md): despliegue con Docker en EC2.
+
+```bash
+docker compose up -d --build                         # 1) esta plataforma (crea sumativa-net)
+(cd ../sumativa2 && docker compose up -d --build)    # 2) ms-backend ×2 + ms-bff
+./scripts/e2e-integracion.sh                         # 3) 65 verificaciones end-to-end
+```
+
+**¿Por qué no un API Gateway?** `ms-bff` ya es el único punto de entrada externo a los datos y
+concentra lo que aportaría un gateway (autenticación JWT, enrutamiento a `ms-backend`, balanceo,
+timeouts, circuit breaker, correlación y auditoría). Un Spring Cloud Gateway delante solo agregaría
+un salto de red y otra pieza que operar. Se justificaría si hubiera varios BFF o APIs públicas que
+necesiten políticas comunes (rate limiting por cliente, TLS, CORS); en AWS ese rol lo cumple mejor
+un ALB/API Gateway administrado.
 
 ---
 
@@ -71,6 +119,7 @@ Las carpetas `E3S8 Microservicios/kafka-producer` y `E3S8 Microservicios/kafka-c
 |---|---|---|
 | `auth-service` | 8080 | Autentica con usuario y contraseña y emite un JWT firmado con `sub`, `roles`, `iat`, `nbf`, `exp`, `iss`, `aud` y `jti`. |
 | `producer-service` | 8081 | Endpoint protegido `POST /notificaciones`. Genera `id` (UUID) y `fecha` (ISO-8601 UTC), publica en el tópico `Notificaciones` y espera la confirmación del broker (`acks=all`). |
+| `discovery-service` | 8761 (solo 127.0.0.1) | Eureka Server: registro dinámico de ms-bff, ms-backend, auth, producer y consumer. HTTP Basic. |
 | `consumer-service` | 8082 | Consume `Notificaciones` con `group.id` configurable, deserializa JSON, registra cada mensaje y hace commit del offset **solo después** de procesarlo. Expone endpoints protegidos para pausar, reanudar y consultar el listener, y para ver los últimos mensajes consumidos. |
 
 ### auth-service y OAuth2
@@ -144,6 +193,7 @@ Recomendaciones:
 | `AUTH_PASSWORD` | sí | – | Contraseña, en texto plano o como `{bcrypt}...`. |
 | `AUTH_ROLES` | no | `USER,ADMIN` | Roles incluidos en el claim `roles`. |
 | `JWT_EXPIRATION_SECONDS` | no | `3600` | Vigencia del token, en segundos. |
+| `AUTH_LOGIN_RATE_LIMIT` / `AUTH_LOGIN_RATE_PERIOD_SECONDS` | no | `10` / `60` | Rate Limiter del login: intentos permitidos por ventana. El exceso responde 429. |
 
 ### producer-service
 
@@ -155,6 +205,9 @@ Recomendaciones:
 | `KAFKA_TOPIC_PARTITIONS` / `KAFKA_TOPIC_REPLICAS` | no | `3` / `3` | Particiones y réplicas usadas al crear el tópico. |
 | `KAFKA_SEND_TIMEOUT_MS` | no | `15000` | Espera máxima por la confirmación del broker. Si se supera, responde 503. |
 | `KAFKA_MAX_BLOCK_MS`, `KAFKA_REQUEST_TIMEOUT_MS`, `KAFKA_DELIVERY_TIMEOUT_MS` | no | 10000 / 10000 / 15000 | Timeouts del cliente productor. |
+| `KAFKA_PUBLISH_RETRY_ATTEMPTS` / `KAFKA_PUBLISH_RETRY_WAIT_MS` | no | `2` / `500` | `@Retry`: intentos totales de publicación (incluye el primero) y espera entre intentos. |
+| `CB_SLIDING_WINDOW_SIZE` / `CB_MINIMUM_CALLS` | no | `10` / `5` | `@CircuitBreaker`: tamaño de la ventana y llamadas mínimas antes de evaluar la tasa de fallos. |
+| `CB_FAILURE_RATE_THRESHOLD` / `CB_WAIT_OPEN_SECONDS` | no | `50` / `30` | % de fallos que abre el circuito y segundos que permanece abierto. |
 
 ### consumer-service
 
@@ -169,6 +222,7 @@ Recomendaciones:
 | `KAFKA_LISTENER_AUTO_STARTUP` | no | `true` | Inicia el listener al arrancar el servicio. |
 | `KAFKA_RETRY_ATTEMPTS` / `KAFKA_RETRY_BACKOFF_MS` | no | `3` / `1000` | Reintentos ante errores de procesamiento antes de descartar el mensaje. |
 | `CONSUMER_HISTORY_SIZE` | no | `100` | Tamaño del historial en memoria. |
+| `CONSUMER_API_RATE_LIMIT` / `CONSUMER_API_RATE_PERIOD_SECONDS` | no | `20` / `1` | Rate Limiter de la API HTTP: solicitudes permitidas por ventana. El exceso responde 429. |
 
 ### Seguridad cliente–broker de Kafka (producer y consumer)
 
@@ -193,18 +247,23 @@ Recomendaciones:
 
 Cada servicio se compila y se prueba por separado. `mvn clean verify` ejecuta:
 
-- **auth-service** (10 pruebas): emisión y claims del JWT, token expirado, login válido, credenciales inválidas (401), cuerpo incompleto o malformado (400) y contexto.
-- **producer-service** (13 pruebas): token válido (201), sin token, token mal formado, otra firma, expirado, otro issuer y otra audience (401), sin roles (403), cuerpo inválido (400), Kafka no disponible (503) y contexto.
-- **consumer-service** (10 pruebas): seguridad de los endpoints administrativos (401/403/404), contexto e **integración con Kafka embebido**: consumo JSON, commit del offset tras el ack y descarte de un mensaje corrupto sin bloquear la partición.
+- **discovery-service** (4 pruebas): health público, registro protegido (401), registro y consulta de dos réplicas de `MS-BACKEND`, y arranque fallido sin credenciales.
+- **auth-service** (19 pruebas; antes 11): además, grant client_credentials (token de servicio, secreto incorrecto, cliente inexistente, grant no soportado, parámetro faltante, grant deshabilitado) y audiencia adicional.
+- **auth-service** (base): emisión y claims del JWT, token expirado, login válido, credenciales inválidas (401), cuerpo incompleto o malformado (400), Rate Limiter del login (429) y contexto.
+- **producer-service** (23 pruebas; antes 15): además, `POST /auditoria/eventos` (201 con clave `eventId`, 403 con token de usuario, 401, 400 por esquema/versión, 503 con reintento), tópico `bff-call-events` con retención de 7 días y **publicación real en Kafka embebido**.
+- **producer-service** (base): token válido (201), sin token, token mal formado, otra firma, expirado, otro issuer y otra audience (401), sin roles (403), cuerpo inválido (400), Kafka no disponible con reintento (503), recuperación por `@Retry` con el mismo mensaje, apertura del Circuit Breaker (503 `circuit_open` sin contactar a Kafka) y contexto.
+- **consumer-service** (14 pruebas; antes 11): además, **consumo con Kafka embebido** de eventos de auditoría (éxito y error), deduplicación por `eventId`, descarte de JSON corrupto y de versión no soportada sin bloquear la partición, commit de offsets y `GET /auditoria/eventos` protegido.
+- **consumer-service** (base): seguridad de los endpoints administrativos (401/403/404), Rate Limiter de la API (429), contexto e **integración con Kafka embebido**: consumo JSON, commit del offset tras el ack y descarte de un mensaje corrupto sin bloquear la partición.
 
 ```bash
 # Con Java 21 instalado (el wrapper descarga Maven si hace falta)
+(cd discovery-service && ./mvnw clean verify)
 (cd auth-service && ./mvnw clean verify)
 (cd producer-service && ./mvnw clean verify)
 (cd consumer-service && ./mvnw clean verify)
 
 # Sin Java ni Maven locales, usando un contenedor Maven
-for s in auth-service producer-service consumer-service; do
+for s in discovery-service auth-service producer-service consumer-service; do
   docker run --rm -v "$PWD/$s":/app -v "$HOME/.m2":/root/.m2 -w /app \
     maven:3.9-eclipse-temurin-21 mvn -B clean verify
 done
@@ -231,10 +290,10 @@ docker compose build
 cp .env.example .env                 # y completa los valores obligatorios
 docker compose up -d --build         # infraestructura + microservicios
 docker compose ps                    # espera a que todo esté "healthy"
-./scripts/e2e-test.sh                # prueba end-to-end automatizada (19 verificaciones)
+./scripts/e2e-integracion.sh         # prueba end-to-end con sumativa2 levantado (65 verificaciones)
 ```
 
-Orden de arranque, controlado con healthchecks y `depends_on`: Zookeeper ×3 → Kafka ×3 → `kafka-init` (crea el tópico) → Kafka UI, `producer-service` y `consumer-service`. `auth-service` no depende de Kafka.
+Orden de arranque, controlado con healthchecks y `depends_on`: Zookeeper ×3 → Kafka ×3 → `kafka-init` (crea `Notificaciones` y `bff-call-events`) → Kafka UI; `discovery-service` → `auth-service`, y `discovery-service` + `kafka-init` → `producer-service` y `consumer-service`. `auth-service` no depende de Kafka.
 
 Para iniciar solo la infraestructura Kafka, por ejemplo para ejecutar los servicios desde el IDE:
 
@@ -557,10 +616,32 @@ docker exec kafka-1 kafka-console-consumer --bootstrap-server kafka-1:9092 \
 
 En EC2, ejecuta los mismos comandos con `docker exec kafka ...` y `--bootstrap-server <dns-privado>:9092`.
 
+## Resiliencia con Resilience4j
+
+Los tres servicios incluyen `resilience4j-spring-boot3` (2.2.0) y `spring-boot-starter-aop`. Los patrones se aplican con anotaciones y se configuran con propiedades `resilience4j.*` en cada `<servicio>.properties` (valores sobreescribibles por variables de entorno).
+
+| Servicio | Anotación | Instancia | Dónde | Comportamiento |
+|---|---|---|---|---|
+| `auth-service` | `@RateLimiter` | `login` | `AuthController.login` | Máximo 10 intentos por minuto (configurable). El exceso responde **429** `too_many_requests` sin evaluar las credenciales. Frena ataques de fuerza bruta. |
+| `producer-service` | `@Retry` | `kafkaProducer` | `KafkaNotificacionPublisher.publicar` | Si Kafka no confirma (`PublicacionException`), reintenta la publicación del **mismo** mensaje (mismo `id` y `fecha`). Al agotar los intentos responde **503** `kafka_unavailable`. |
+| `producer-service` | `@CircuitBreaker` | `kafkaProducer` | `KafkaNotificacionPublisher.publicar` | Con ≥ 50 % de fallos en la ventana, el circuito se **abre** 30 s: las solicitudes responden **503** `circuit_open` de inmediato, sin esperar el timeout de Kafka. Luego pasa a semiabierto y deja pasar 2 llamadas de prueba. El `fallbackMethod` solo actúa con el circuito abierto. |
+| `consumer-service` | `@RateLimiter` | `consumerApi` | `MensajesController`, `KafkaAdminListenerController` | Máximo 20 solicitudes por segundo a la API HTTP. El exceso responde **429** `too_many_requests`. |
+
+El orden de los aspectos en el productor es `Retry( CircuitBreaker( envío ) )`: cada intento cuenta para el Circuit Breaker y, con el circuito abierto, no se reintenta (`CircuitoAbiertoException` no está en `retry-exceptions`).
+
+Estos mecanismos son **adicionales** a los reintentos y timeouts propios de Kafka (`delivery.timeout.ms`, idempotencia del productor y `DefaultErrorHandler` del consumidor), que siguen operando a nivel de cliente/broker.
+
+```bash
+# Ejemplo: con Kafka detenido, tras algunas solicitudes fallidas el circuito se abre
+curl -s -X POST localhost:8081/notificaciones -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"usuario":"ana"}'
+# {"error":"circuit_open","message":"Kafka no está disponible temporalmente (circuit breaker abierto). ..."}
+```
+
 ## Decisiones técnicas y limitaciones
 
 - **HS256 con secreto compartido.** Es simple de operar en EC2 y no crea una dependencia de red en runtime entre los servicios. Como contrapartida, cualquier servicio con el secreto podría emitir tokens. Si se necesita separar emisión y validación, la evolución natural es firmar con **RS256**, publicar un **JWKS** y configurar los Resource Servers con `issuer-uri` / `jwk-set-uri`. Esto incluye reemplazar `auth-service` por Spring Authorization Server, Keycloak o Amazon Cognito sin cambiar los controladores.
-- **Usuario único configurado por entorno.** No hay base de datos de usuarios, *refresh tokens* ni revocación: un token es válido hasta su `exp`. El endpoint de login no aplica *rate limiting*; en producción conviene limitarlo en el ALB o con AWS WAF.
+- **Usuario único configurado por entorno.** No hay base de datos de usuarios, *refresh tokens* ni revocación: un token es válido hasta su `exp`. El login tiene un Rate Limiter de Resilience4j **global por instancia** (no por IP ni por usuario): frena la fuerza bruta, pero un abuso sostenido también bloquea temporalmente a usuarios legítimos. En producción conviene complementarlo con límites por IP en el ALB o AWS WAF.
 - **Kafka sin SASL por defecto.** El tráfico Kafka viaja en `PLAINTEXT` dentro de la red Docker o la VPC. Los clientes ya admiten SASL_SSL y SASL_PLAINTEXT por variables de entorno, pero los brokers del `docker-compose.yml` no traen SASL configurado.
 - **Historial en memoria.** `GET /notificaciones/consumidas` refleja solo lo que procesó esa instancia desde su último arranque. Es una herramienta de verificación, no un almacenamiento.
 - **Zookeeper.** Se mantiene la arquitectura de referencia (Confluent 7.4.4 con Zookeeper). En una versión nueva conviene migrar a KRaft.

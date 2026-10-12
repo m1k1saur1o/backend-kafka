@@ -63,7 +63,8 @@ class AuthControllerTest {
 
 		assertThat(jwt.getSubject()).isEqualTo("test-user");
 		assertThat(jwt.getClaimAsString("iss")).isEqualTo("test-issuer");
-		assertThat(jwt.getAudience()).containsExactly("test-audience");
+		// Audiencia principal (producer/consumer) + audiencia adicional (ms-bff)
+		assertThat(jwt.getAudience()).containsExactly("test-audience", "test-bff-audience");
 		assertThat(jwt.getClaimAsStringList("roles")).containsExactlyInAnyOrder("USER", "ADMIN");
 		assertThat(jwt.getIssuedAt()).isBeforeOrEqualTo(Instant.now());
 		assertThat(jwt.getExpiresAt()).isEqualTo(jwt.getIssuedAt().plusSeconds(600));

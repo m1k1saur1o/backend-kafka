@@ -9,3 +9,6 @@ app.jwt.issuer=sumativa3-auth-service
 app.jwt.audience=notificaciones-api
 app.kafka.bootstrap-servers=<host1>:29092,<host2>:39092,<host3>:49092
 app.kafka.topic=Notificaciones
+app.kafka.auditoria.topic=bff-call-events
+# Sin discovery-service local:
+eureka.client.enabled=false

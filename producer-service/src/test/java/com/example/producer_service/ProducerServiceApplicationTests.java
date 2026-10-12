@@ -13,13 +13,27 @@ import org.springframework.test.context.TestPropertySource;
 class ProducerServiceApplicationTests {
 
 	@Autowired
-	private NewTopic topic;
+	private NewTopic topicNotificaciones;
+
+	@Autowired
+	private NewTopic topicAuditoriaBff;
 
 	@Test
 	void contextLoadsYDeclaraTopicoNotificaciones() {
 
-		assertThat(topic.name()).isEqualTo("Notificaciones");
-		assertThat(topic.numPartitions()).isEqualTo(3);
-		assertThat(topic.replicationFactor()).isEqualTo((short) 3);
+		assertThat(topicNotificaciones.name()).isEqualTo("Notificaciones");
+		assertThat(topicNotificaciones.numPartitions()).isEqualTo(3);
+		assertThat(topicNotificaciones.replicationFactor()).isEqualTo((short) 3);
+	}
+
+	@Test
+	void declaraTopicoDeAuditoriaSeparadoConRetencionDeSieteDias() {
+
+		assertThat(topicAuditoriaBff.name()).isEqualTo("bff-call-events");
+		assertThat(topicAuditoriaBff.numPartitions()).isEqualTo(3);
+		assertThat(topicAuditoriaBff.replicationFactor()).isEqualTo((short) 3);
+		assertThat(topicAuditoriaBff.configs())
+				.containsEntry("retention.ms", "604800000")
+				.containsEntry("min.insync.replicas", "2");
 	}
 }

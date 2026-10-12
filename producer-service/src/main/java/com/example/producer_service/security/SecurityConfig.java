@@ -31,6 +31,7 @@ import java.util.List;
 /**
  * Configuración de OAuth2 Resource Server: todas las rutas (excepto health) exigen
  * {@code Authorization: Bearer <JWT>} con firma HS256 válida, issuer, audience y vigencia correctos.
+ * POST /notificaciones exige rol USER o ADMIN; POST /auditoria/eventos exige AUDIT_PUBLISHER.
  */
 @Configuration
 public class SecurityConfig {
@@ -47,6 +48,8 @@ public class SecurityConfig {
 				.authorizeHttpRequests(auth -> auth
 						.requestMatchers("/actuator/health", "/actuator/health/**", "/error").permitAll()
 						.requestMatchers(HttpMethod.POST, "/notificaciones").hasAnyRole("USER", "ADMIN")
+						// Solo el token de servicio de ms-bff (client_credentials) publica auditoría
+						.requestMatchers(HttpMethod.POST, "/auditoria/eventos").hasRole("AUDIT_PUBLISHER")
 						.anyRequest().authenticated())
 				.oauth2ResourceServer(rs -> rs
 						.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sumativa3.local/schemas/bff-call-event.v1.json",
+  "title": "BffCallEvent v1",
+  "description": "Evento de auditoria de una llamada HTTP recibida por ms-bff. Topico: bff-call-events. Clave Kafka: eventId.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schemaVersion", "eventType", "eventId", "timestamp", "requestId", "sourceService", "method",
+               "path", "endpoint", "channel", "authenticated", "status", "outcome", "durationMs"],
+  "properties": {
+    "schemaVersion":  { "type": "string", "pattern": "^1\\.[0-9]+$", "description": "Version del contrato (1.x compatibles entre si)" },
+    "eventType":      { "const": "BFF_HTTP_CALL" },
+    "eventId":        { "type": "string", "format": "uuid", "maxLength": 64, "description": "Unico por evento; clave Kafka y clave de deduplicacion" },
+    "timestamp":      { "type": "string", "format": "date-time", "description": "Instante UTC (sufijo Z) en que ms-bff recibio la solicitud" },
+    "requestId":      { "type": "string", "maxLength": 64, "description": "Correlacion: X-Request-Id recibido (si es valido) o generado; se devuelve al cliente" },
+    "sourceService":  { "type": "string", "examples": ["ms-bff"] },
+    "sourceInstance": { "type": ["string", "null"], "examples": ["ms-bff:172.22.0.8:8080"] },
+    "method":         { "type": "string", "examples": ["GET"] },
+    "path":           { "type": "string", "maxLength": 2048, "description": "Ruta sin query string; fragmentos con forma de JWT se reemplazan por [REDACTED]" },
+    "routePattern":   { "type": ["string", "null"], "examples": ["/api/movil/cuentas/{cuentaId}"], "description": "Patron del controlador; null si la solicitud no llego a un controlador (401/403/404 de ruta)" },
+    "endpoint":       { "type": "string", "examples": ["movil.cuentas", "cajeros.transacciones"], "description": "Endpoint logico canal.recurso" },
+    "channel":        { "enum": ["movil", "cajeros", "web", "desconocido"] },
+    "user":           { "type": ["string", "null"], "description": "Claim sub del JWT validado; null si no se autentico" },
+    "authenticated":  { "type": "boolean" },
+    "status":         { "type": "integer", "minimum": 100, "maximum": 599 },
+    "outcome":        { "enum": ["SUCCESS", "CLIENT_ERROR", "SERVER_ERROR"] },
+    "durationMs":     { "type": "integer", "minimum": 0 },
+    "errorCode":      { "type": ["string", "null"], "examples": ["TOKEN_AUSENTE", "TOKEN_INVALIDO", "ACCESO_DENEGADO", "PARAMETRO_INVALIDO", "DATOS_NO_ENCONTRADOS", "RUTA_NO_ENCONTRADA", "METODO_NO_PERMITIDO", "SERVICIO_DATOS_NO_DISPONIBLE", "ERROR_INTERNO"] },
+    "errorMessage":   { "type": ["string", "null"], "maxLength": 500 }
+  }
+}

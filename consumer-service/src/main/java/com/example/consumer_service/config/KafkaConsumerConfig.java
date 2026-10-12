@@ -9,6 +9,8 @@ import org.springframework.kafka.listener.CommonErrorHandler;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.util.backoff.FixedBackOff;
 
+import com.example.consumer_service.exception.EventoInvalidoException;
+
 /**
  * El ConsumerFactory y el contenedor los crea Spring Boot a partir de spring.kafka.*
  * (ErrorHandlingDeserializer + JsonDeserializer, ack manual). Aquí se define qué hacer
@@ -30,6 +32,8 @@ public class KafkaConsumerConfig {
 						NestedExceptionUtils.getMostSpecificCause(ex).getMessage()),
 				new FixedBackOff(props.retryBackoff().toMillis(), props.retryAttempts()));
 		handler.setCommitRecovered(true);
+		// Un evento que no cumple el contrato no mejora reintentándolo
+		handler.addNotRetryableExceptions(EventoInvalidoException.class);
 
 		return handler;
 	}

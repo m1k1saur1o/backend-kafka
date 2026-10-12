@@ -29,7 +29,8 @@ import com.example.consumer_service.config.JwtProperties;
 
 /**
  * OAuth2 Resource Server: todos los endpoints HTTP (excepto health) exigen JWT válido.
- * Consultar estado/historial requiere USER o ADMIN; pausar/reanudar el listener requiere ADMIN.
+ * Consultar estado/historial (notificaciones y auditoría de ms-bff) requiere USER o ADMIN;
+ * pausar/reanudar un listener requiere ADMIN.
  *
  * Esta protección aplica a la API HTTP; la conexión Kafka cliente-broker se protege por separado
  * (SASL_SSL / SASL_PLAINTEXT) mediante variables de entorno.
@@ -49,7 +50,7 @@ public class SecurityConfig {
 				.authorizeHttpRequests(auth -> auth
 						.requestMatchers("/actuator/health", "/actuator/health/**", "/error").permitAll()
 						.requestMatchers(HttpMethod.POST, "/kafka-listener/**").hasRole("ADMIN")
-						.requestMatchers(HttpMethod.GET, "/kafka-listener/**", "/notificaciones/**")
+						.requestMatchers(HttpMethod.GET, "/kafka-listener/**", "/notificaciones/**", "/auditoria/**")
 						.hasAnyRole("USER", "ADMIN")
 						.anyRequest().denyAll())
 				.oauth2ResourceServer(rs -> rs

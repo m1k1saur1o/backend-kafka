@@ -47,4 +47,11 @@ public class GlobalExceptionHandler {
 		return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
 				.body(new ErrorResponse("kafka_unavailable", ex.getMessage()));
 	}
+
+	@ExceptionHandler(CircuitoAbiertoException.class)
+	public ResponseEntity<ErrorResponse> circuitoAbierto(CircuitoAbiertoException ex) {
+
+		return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+				.body(new ErrorResponse("circuit_open", ex.getMessage()));
+	}
 }

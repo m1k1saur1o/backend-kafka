@@ -8,6 +8,8 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 import com.example.consumer_service.dto.ErrorResponse;
 
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
+
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -22,5 +24,13 @@ public class GlobalExceptionHandler {
 
 		return ResponseEntity.badRequest()
 				.body(new ErrorResponse("invalid_request", "Parámetro inválido: " + ex.getName()));
+	}
+
+	@ExceptionHandler(RequestNotPermitted.class)
+	public ResponseEntity<ErrorResponse> demasiadasSolicitudes(RequestNotPermitted ex) {
+
+		return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+				.body(new ErrorResponse("too_many_requests",
+						"Se superó el límite de solicitudes. Intente nuevamente en unos segundos."));
 	}
 }

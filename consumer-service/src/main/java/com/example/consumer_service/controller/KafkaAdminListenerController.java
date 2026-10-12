@@ -11,10 +11,15 @@ import org.springframework.web.bind.annotation.RestController;
 import com.example.consumer_service.dto.ListenerEstadoResponse;
 import com.example.consumer_service.service.KafkaAdminListenerService;
 
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
+
 /**
  * Administración del listener Kafka. Requiere JWT: GET con rol USER/ADMIN, POST con rol ADMIN.
+ *
+ * Protegido con el Rate Limiter de Resilience4j "consumerApi" (429 al superar el límite).
  */
 @RestController
+@RateLimiter(name = "consumerApi")
 @RequestMapping("/kafka-listener")
 public class KafkaAdminListenerController {
 
